@@ -1,0 +1,32 @@
+{
+  "name": "dragonrealms-mcp",
+  "version": "0.1.0",
+  "description": "MCP server for DragonRealms with Elanthipedia integration and browser I/O bridge",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "ui:dev": "npm --prefix ui run dev",
+    "ui:build": "npm --prefix ui run build"
+  },
+  "keywords": [
+    "mcp",
+    "dragonrealms",
+    "elanthipedia"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.17.4",
+    "cheerio": "^1.0.0-rc.12",
+    "express": "^4.21.2",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.10.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

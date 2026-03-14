@@ -1,0 +1,23 @@
+node_modules/
+dist/
+.env
+*.log
+.DS_Store
+baseclient/client.local.ini
+frostbite/Frostbite.app/Contents/MacOS/client.local.ini
+
+# Frostbite build artifacts (keep source)
+frostbite/Frostbite.app/
+frostbite/*.dmg
+frostbite/*-osx.dmg
+frostbite/**/*.o
+frostbite/**/objs/
+frostbite/**/moc_*.cpp
+frostbite/**/moc_*.h
+frostbite/**/qrc_*.cpp
+frostbite/**/ui_*.h
+frostbite/**/.qmake.stash
+frostbite/**/*.pro.user*
+frostbite/**/Makefile
+frostbite/**/*.psd
+frostbite/deploy/common/security/*.pem
