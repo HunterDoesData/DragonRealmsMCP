@@ -1,0 +1,107 @@
+{
+  "name": "elanthipedia-hotset-v1",
+  "source": {
+    "baseUrl": "https://elanthipedia.play.net",
+    "mode": "mediawiki-api-plus-html",
+    "userAgent": "DragonRealmsMCP-RAG/0.1 (+local-dev)",
+    "rateLimitRps": 1.5,
+    "maxConcurrency": 3,
+    "retry": {
+      "maxAttempts": 3,
+      "backoffMs": [500, 1500, 4000]
+    }
+  },
+  "scope": {
+    "namespaces": ["Main"],
+    "includeCategories": [
+      "Skills",
+      "Spells",
+      "Combat",
+      "Magic",
+      "Commands",
+      "Crafting",
+      "Foraging",
+      "First Aid",
+      "Alchemy"
+    ],
+    "includeTitlePrefixes": [
+      "Spell:",
+      "Command:",
+      "Skill:"
+    ],
+    "excludeTitleRegex": [
+      "^User:",
+      "^Talk:",
+      "^Template:",
+      "^Help:",
+      "^File:",
+      "^Category:",
+      "^Special:"
+    ],
+    "excludeUrlContains": [
+      "action=edit",
+      "oldid="
+    ]
+  },
+  "extraction": {
+    "stripSelectors": [
+      ".mw-editsection",
+      "#mw-navigation",
+      "#footer",
+      "script",
+      "style"
+    ],
+    "includeSectionHeadings": [
+      "Overview",
+      "Usage",
+      "Syntax",
+      "Mechanics",
+      "Effects",
+      "Training",
+      "Prerequisites"
+    ],
+    "tableHandling": "keep-structured-text"
+  },
+  "chunking": {
+    "targetTokens": 650,
+    "maxTokens": 900,
+    "minTokens": 120,
+    "overlapTokens": 100,
+    "commandSectionTargetTokens": 350,
+    "preserveTopLevelHeadings": true
+  },
+  "metadata": {
+    "fields": [
+      "doc_id",
+      "chunk_id",
+      "title",
+      "heading_path",
+      "url",
+      "revision_id",
+      "updated_at",
+      "category_tags",
+      "topic_tags",
+      "guild_tags",
+      "skill_tags",
+      "token_count"
+    ]
+  },
+  "retrieval": {
+    "strategy": "hybrid",
+    "denseTopK": 24,
+    "sparseTopK": 24,
+    "rerankTopN": 30,
+    "finalTopN": 10,
+    "maxChunksPerPage": 3
+  },
+  "freshness": {
+    "incrementalSyncHours": 24,
+    "weeklyIntegrityPass": true,
+    "reembedOnlyChangedRevisions": true
+  },
+  "answerPolicy": {
+    "requireCitations": true,
+    "citationFields": ["title", "heading_path", "url"],
+    "lowConfidenceBehavior": "respond-insufficient-evidence"
+  }
+}

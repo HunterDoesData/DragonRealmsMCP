@@ -1,0 +1,19 @@
+{
+  "configName": "elanthipedia-hotset-v1",
+  "generatedAt": "2026-03-14T14:58:59.870Z",
+  "sourceBaseUrl": "https://elanthipedia.play.net",
+  "candidateTitles": 1195,
+  "processedPages": 1195,
+  "skippedPages": 0,
+  "chunksGenerated": 2029,
+  "output": {
+    "pages": "data/rag/elanthipedia-pages.jsonl",
+    "chunks": "data/rag/elanthipedia-chunks.jsonl"
+  },
+  "dedupe": {
+    "pagesBefore": 2379,
+    "pagesAfter": 1195,
+    "chunksBefore": 4035,
+    "chunksAfter": 2029
+  }
+}
