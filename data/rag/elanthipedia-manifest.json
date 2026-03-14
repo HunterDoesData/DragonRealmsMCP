@@ -1,19 +1,31 @@
 {
   "configName": "elanthipedia-hotset-v1",
-  "generatedAt": "2026-03-14T14:58:59.870Z",
+  "generatedAt": "2026-03-14T16:36:32.271Z",
   "sourceBaseUrl": "https://elanthipedia.play.net",
-  "candidateTitles": 1195,
-  "processedPages": 1195,
-  "skippedPages": 0,
-  "chunksGenerated": 2029,
-  "output": {
-    "pages": "data/rag/elanthipedia-pages.jsonl",
-    "chunks": "data/rag/elanthipedia-chunks.jsonl"
+  "mode": "delta",
+  "sinceIso": "2026-03-13T16:36:32.271Z",
+  "changedTitlesDetected": 5,
+  "touchedTitles": 5,
+  "deltaPagesWritten": 0,
+  "deltaChunksWritten": 0,
+  "skippedOutOfScope": 5,
+  "skippedErrors": 0,
+  "mergedTotals": {
+    "pages": 1195,
+    "chunks": 2029
   },
-  "dedupe": {
-    "pagesBefore": 2379,
-    "pagesAfter": 1195,
-    "chunksBefore": 4035,
-    "chunksAfter": 2029
-  }
+  "output": {
+    "pages": "/Users/edward/Code/DragonRealmsMCP/data/rag/elanthipedia-pages.jsonl",
+    "chunks": "/Users/edward/Code/DragonRealmsMCP/data/rag/elanthipedia-chunks.jsonl",
+    "deltaPages": "/Users/edward/Code/DragonRealmsMCP/data/rag/delta/elanthipedia-pages.delta.jsonl",
+    "deltaChunks": "/Users/edward/Code/DragonRealmsMCP/data/rag/delta/elanthipedia-chunks.delta.jsonl"
+  },
+  "replacedTitles": [
+    "Allye",
+    "Carving knife",
+    "Esent",
+    "Goblin zombie",
+    "Tatting Street"
+  ],
+  "includedTitles": []
 }

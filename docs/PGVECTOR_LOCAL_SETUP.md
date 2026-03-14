@@ -59,6 +59,27 @@ JSON output:
 npm run rag:query:pgvector -- --q "best empath healing spell" --k 5 --json
 ```
 
+## 6) Daily incremental refresh
+
+Run delta ingest to fetch only recently changed pages (checkpointed by timestamp):
+
+```bash
+npm run rag:ingest:delta
+```
+
+This writes:
+- `data/rag/delta/elanthipedia-pages.delta.jsonl`
+- `data/rag/delta/elanthipedia-chunks.delta.jsonl`
+- `data/rag/elanthipedia-state.json` (checkpoint)
+
+Then apply only delta embeddings to pgvector:
+
+```bash
+npm run rag:embed:delta
+```
+
+`rag:embed:delta` replaces vectors for affected page URLs and inserts new delta chunks.
+
 ## Notes
 
 - Keep `RAG_VECTOR_DIM` consistent with your embedding model output.

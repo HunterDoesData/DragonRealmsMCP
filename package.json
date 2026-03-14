@@ -9,8 +9,10 @@
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
     "rag:ingest:hotset": "tsx src/rag/elanthipediaHotsetIngest.ts --config examples/elanthipedia-hotset.config.json --out data/rag",
+    "rag:ingest:delta": "tsx src/rag/elanthipediaDeltaIngest.ts --config examples/elanthipedia-hotset.config.json --dataDir data/rag",
     "rag:pg:init": "tsx src/rag/pgvectorInit.ts",
     "rag:embed:pgvector": "tsx src/rag/pgvectorEmbedHotset.ts --input data/rag/elanthipedia-chunks.jsonl",
+    "rag:embed:delta": "tsx src/rag/pgvectorEmbedDelta.ts --deltaChunks data/rag/delta/elanthipedia-chunks.delta.jsonl --deltaPages data/rag/delta/elanthipedia-pages.delta.jsonl",
     "rag:query:pgvector": "tsx src/rag/pgvectorQuery.ts",
     "ui:dev": "npm --prefix ui run dev",
     "ui:build": "npm --prefix ui run build"
