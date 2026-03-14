@@ -241,7 +241,7 @@ CONFIG(release, debug|release) {
         postbuild.commands = $(COPY_DIR) $$DEPLOY_FILES $$DEPLOY_PATH &&
         postbuild.commands += $(COPY_DIR) $$DEPLOY_FILES_MAC $$DEPLOY_PATH
 
-        DEPLOY = $$DEPLOY_QT $$APP_PATH -dmg && $(COPY_FILE) $$DMG $$RELEASE_FILE
+        DEPLOY = $(DEL_FILE) $$DMG && $$DEPLOY_QT $$APP_PATH -dmg && $(COPY_FILE) $$DMG $$RELEASE_FILE
     }
 
     unix:!macx {

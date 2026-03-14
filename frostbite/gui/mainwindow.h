@@ -161,6 +161,7 @@ private:
     QStringList aiNavigationMoves;
     qint64 aiNavigationLastMoveMs;
     bool aiMapNavigationEnabled;
+    bool aiNavigationRestoreObserverOnFinish;
 
     Tray* tray;
     TimerBar* timerBar;
@@ -171,6 +172,7 @@ private:
     void initSettings();
     void loadClient();
     void appSetup();
+    void restoreObserverModeAfterNavigation();
 
 protected:
     void closeEvent(QCloseEvent*);

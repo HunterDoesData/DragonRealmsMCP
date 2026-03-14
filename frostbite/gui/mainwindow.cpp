@@ -41,6 +41,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWi
     aiNavigationTimer = NULL;
     aiNavigationLastMoveMs = 0;
     aiMapNavigationEnabled = false;
+    aiNavigationRestoreObserverOnFinish = false;
 
     // register types
     qRegisterMetaType<DirectionsList>("DirectionsList");    
@@ -550,6 +551,7 @@ void MainWindow::startAiNavigation(const QString& destination) {
 
     aiNavigationMoves = moves;
     aiNavigationLastMoveMs = 0;
+    aiNavigationRestoreObserverOnFinish = false;
 
     if (aiNavigationTimer != NULL && !aiNavigationTimer->isActive()) {
         aiNavigationTimer->start(300);
@@ -717,6 +719,14 @@ void MainWindow::startAiNavigationToRoom(const QString& zoneId, int level, int n
     aiNavigationMoves = moves;
     aiNavigationLastMoveMs = 0;
 
+    if (aiBridgeService != NULL) {
+        if (aiBridgeService->isObserverModeEnabled()) {
+            aiBridgeService->setObserverMode(false);
+            aiNavigationRestoreObserverOnFinish = true;
+            emit writeMainWindow("<br/><span class=\"echo\">[AI] Map-nav: observer mode temporarily disabled during route.</span><br/>");
+        }
+    }
+
     if (aiNavigationTimer != NULL && !aiNavigationTimer->isActive()) {
         aiNavigationTimer->start(300);
     }
@@ -740,7 +750,20 @@ void MainWindow::stopAiNavigation() {
     if (aiNavigationTimer != NULL) {
         aiNavigationTimer->stop();
     }
+    restoreObserverModeAfterNavigation();
     emit writeMainWindow("<br/><span class=\"echo\">[AI] Navigation stopped.</span><br/>");
+}
+
+void MainWindow::restoreObserverModeAfterNavigation() {
+    if (!aiNavigationRestoreObserverOnFinish || aiBridgeService == NULL) {
+        return;
+    }
+
+    aiNavigationRestoreObserverOnFinish = false;
+    if (!aiBridgeService->isObserverModeEnabled()) {
+        aiBridgeService->setObserverMode(true);
+        emit writeMainWindow("<br/><span class=\"echo\">[AI] Map-nav: observer mode restored after route.</span><br/>");
+    }
 }
 
 void MainWindow::processAiNavigationQueue() {
@@ -748,6 +771,7 @@ void MainWindow::processAiNavigationQueue() {
         if (aiNavigationTimer != NULL) {
             aiNavigationTimer->stop();
         }
+        restoreObserverModeAfterNavigation();
         return;
     }
 
@@ -772,6 +796,7 @@ void MainWindow::processAiNavigationQueue() {
         if (aiNavigationTimer != NULL) {
             aiNavigationTimer->stop();
         }
+        restoreObserverModeAfterNavigation();
         emit writeMainWindow("<br/><span class=\"echo\">[AI] Navigation route complete.</span><br/>");
     }
 }
