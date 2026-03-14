@@ -3,6 +3,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { BrowserBridge } from "./browserBridge.js";
 import { getElanthipediaPage, getGuildSkills, getSkill, searchElanthipedia } from "./elanthipedia.js";
+import { queryPgvector } from "./rag/pgvectorSearch.js";
 
 const SERVER_NAME = "dragonrealms-mcp";
 const SERVER_VERSION = "0.1.0";
@@ -10,11 +11,74 @@ const SERVER_VERSION = "0.1.0";
 const bridgePort = Number(process.env.DR_BRIDGE_PORT ?? "3989");
 const bridgeToken = process.env.DR_BRIDGE_TOKEN;
 const bridge = new BrowserBridge({ token: bridgeToken });
+const ragMinSimilarity = Math.max(
+  0,
+  Math.min(1, Number(process.env.RAG_MIN_SIMILARITY ?? "0.58"))
+);
 
 const server = new McpServer({
   name: SERVER_NAME,
   version: SERVER_VERSION
 });
+
+server.tool(
+  "elanthipedia_rag_query",
+  "Search local pgvector-backed Elanthipedia chunks and return cited context snippets.",
+  {
+    query: z.string().min(2),
+    topK: z.number().int().min(1).max(25).optional(),
+    hybrid: z.boolean().optional(),
+    maxCharsPerResult: z.number().int().min(150).max(1500).optional()
+  },
+  async ({ query, topK, hybrid, maxCharsPerResult }) => {
+    const results = await queryPgvector(query, topK ?? 8, { hybrid: hybrid ?? true });
+    if (results.length === 0) {
+      return {
+        content: [{ type: "text", text: "No local RAG matches found. Ensure pgvector is populated." }]
+      };
+    }
+
+    const confidentResults = results.filter((item) => item.similarity >= ragMinSimilarity);
+    if (confidentResults.length === 0) {
+      const best = results[0];
+      return {
+        content: [
+          {
+            type: "text",
+            text: [
+              `Query: ${query}`,
+              `Mode: ${(hybrid ?? true) ? "hybrid" : "semantic-only"}`,
+              "Status: insufficient evidence from local RAG index.",
+              `Best similarity: ${best.similarity.toFixed(4)} (threshold ${ragMinSimilarity.toFixed(2)}).`,
+              "Try a narrower query or reduce RAG_MIN_SIMILARITY if needed."
+            ].join("\n")
+          }
+        ]
+      };
+    }
+
+    const clip = maxCharsPerResult ?? 500;
+    const body = confidentResults
+      .map((item, index) => {
+        const snippet = item.text.replace(/\s+/g, " ").trim();
+        const trimmed = snippet.length > clip ? `${snippet.slice(0, clip)}...` : snippet;
+        const citation = `${item.title}${item.headingPath ? ` :: ${item.headingPath}` : ""}`;
+        return [
+          `${index + 1}. ${citation}`,
+          `Citation: ${citation} (${item.url})`,
+          `Similarity: ${item.similarity.toFixed(4)}`,
+          `Snippet: ${trimmed}`
+        ].join("\n");
+      })
+      .join("\n\n");
+
+    const text = `Query: ${query}\nMode: ${(hybrid ?? true) ? "hybrid" : "semantic-only"}\nThreshold: >= ${ragMinSimilarity.toFixed(2)}\n\n${body}`;
+
+    return {
+      content: [{ type: "text", text }]
+    };
+  }
+);
 
 server.tool(
   "elanthipedia_search",
