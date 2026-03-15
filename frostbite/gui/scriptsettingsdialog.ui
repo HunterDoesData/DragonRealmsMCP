@@ -573,6 +573,43 @@
              </layout>
             </widget>
            </item>
+          <item>
+           <widget class="QGroupBox" name="groupBox_18">
+            <property name="title">
+             <string>Autonomy startup survey</string>
+            </property>
+            <layout class="QVBoxLayout" name="verticalLayout_23">
+             <item>
+              <widget class="QLabel" name="autonomyStartupCommandsLabel">
+               <property name="text">
+                <string>Commands (comma-separated)</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QLineEdit" name="aiAutonomyStartupCommandsInput">
+               <property name="placeholderText">
+                <string>info, exp, look, inventory, encumbrance, assess</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QLabel" name="autonomyStartupDelayLabel">
+               <property name="text">
+                <string>Delay between startup commands (ms)</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QLineEdit" name="aiAutonomyStartupDelayInput">
+               <property name="placeholderText">
+                <string>1800</string>
+               </property>
+              </widget>
+             </item>
+            </layout>
+           </widget>
+          </item>
           </layout>
          </widget>
         </item>

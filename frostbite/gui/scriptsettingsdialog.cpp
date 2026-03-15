@@ -42,6 +42,8 @@ ScriptSettingsDialog::ScriptSettingsDialog(QWidget *parent) : QDialog(parent), u
     ui->aiConsumeCommandsEnabled->setObjectName("AiBridge/consumeCommands");
     ui->aiBridgeBaseUrlInput->setObjectName("AiBridge/baseUrl");
     ui->aiBridgeTokenInput->setObjectName("AiBridge/token");
+    ui->aiAutonomyStartupCommandsInput->setObjectName("AiBridge/autonomyStartupCommands");
+    ui->aiAutonomyStartupDelayInput->setObjectName("AiBridge/autonomyStartupDelayMs");
 
     ui->scriptInterpreterButton->setProperty("input", QVariant::fromValue<QLineEdit*>(ui->scriptInterpreterInput));
     ui->scriptEntryButton->setProperty("input", QVariant::fromValue<QLineEdit*>(ui->scriptEntryInput));
@@ -53,6 +55,7 @@ ScriptSettingsDialog::ScriptSettingsDialog(QWidget *parent) : QDialog(parent), u
     auto portValidator = new QRegExpValidator(QRegExp("^(\\s*|\\d+)$"), this);
     ui->scriptPortInput->setValidator(portValidator);
     ui->streamingPortInput->setValidator(portValidator);
+    ui->aiAutonomyStartupDelayInput->setValidator(portValidator);
     ui->applyButton->setDisabled(true);
 
     this->loadSettings();
@@ -69,7 +72,8 @@ ScriptSettingsDialog::ScriptSettingsDialog(QWidget *parent) : QDialog(parent), u
     inputs << ui->scriptInterpreterInput << ui->scriptEntryInput << ui->scriptPathInput << ui->scriptExtensionInput << ui->scriptPortInput
             << ui->lichRubyInput << ui->lichLocationInput << ui->lichArgumentsInput << ui->streamingPortInput
             << ui->openAiApiKeyInput << ui->anthropicApiKeyInput << ui->mcpEntryPathInput << ui->nodeExecutableInput
-            << ui->aiBridgeBaseUrlInput << ui->aiBridgeTokenInput;
+            << ui->aiBridgeBaseUrlInput << ui->aiBridgeTokenInput
+            << ui->aiAutonomyStartupCommandsInput << ui->aiAutonomyStartupDelayInput;
 
     foreach(QLineEdit* input, inputs) {
         connect(input, &QLineEdit::editingFinished, this, &ScriptSettingsDialog::inputChanged);
@@ -434,6 +438,10 @@ void ScriptSettingsDialog::loadSettings() {
     ui->aiConsumeCommandsEnabled->setCheckState(settings->getParameter("AiBridge/consumeCommands", false).toBool() ? Qt::Checked : Qt::Unchecked);
     ui->aiBridgeBaseUrlInput->setText(settings->getParameter("AiBridge/baseUrl", "http://127.0.0.1:3989").toString());
     ui->aiBridgeTokenInput->setText(settings->getParameter("AiBridge/token", "").toString());
+    ui->aiAutonomyStartupCommandsInput->setText(
+        settings->getParameter("AiBridge/autonomyStartupCommands", "info, exp, look, inventory, encumbrance, assess").toString());
+    ui->aiAutonomyStartupDelayInput->setText(
+        settings->getParameter("AiBridge/autonomyStartupDelayMs", "1800").toString());
 }
 
 void ScriptSettingsDialog::refreshOllamaModels() {
