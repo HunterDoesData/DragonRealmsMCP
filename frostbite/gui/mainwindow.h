@@ -125,6 +125,7 @@ public:
     void stopAiNavigation();
     void setAiMapNavigationEnabled(bool enabled);
     bool isAiMapNavigationEnabled() const;
+    QString getAiAutonomyRuntimeStatus() const;
     void listAiPendingCommands();
     void approveAiCommand(int id = -1);
     void rejectAiCommand(int id = -1);
@@ -162,6 +163,8 @@ private:
     qint64 aiNavigationLastMoveMs;
     bool aiMapNavigationEnabled;
     bool aiNavigationRestoreObserverOnFinish;
+    int aiAutonomyExecutedCount;
+    QString aiAutonomyLastCommand;
 
     Tray* tray;
     TimerBar* timerBar;
@@ -173,6 +176,11 @@ private:
     void loadClient();
     void appSetup();
     void restoreObserverModeAfterNavigation();
+    bool isDefensiveAiCommand(const QString& command) const;
+    bool isTrainingAiCommand(const QString& command) const;
+    bool isExploreAiCommand(const QString& command) const;
+    bool isSocialAiCommand(const QString& command) const;
+    bool isAutonomyCommandAllowed(const QString& command, const QStringList& switches) const;
 
 protected:
     void closeEvent(QCloseEvent*);
@@ -187,6 +195,7 @@ public slots:
     void setMainTitle(QString);
     void handleAppMessage(const QString&);
     void handleAiBridgeStatus(const QString&);
+    void handleAiAutonomyActivated();
     void handleAiCommandProposed(const QString& command);
     void processAiNavigationQueue();
     void updateScriptSettings();    

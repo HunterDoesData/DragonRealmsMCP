@@ -413,7 +413,7 @@
             <item>
              <widget class="QLabel" name="ollamaModelHintLabel">
               <property name="text">
-               <string>Showing likely agent-capable models from local Ollama.</string>
+               <string>Showing agent-capable models from local Ollama.</string>
               </property>
               <property name="wordWrap">
                <bool>true</bool>

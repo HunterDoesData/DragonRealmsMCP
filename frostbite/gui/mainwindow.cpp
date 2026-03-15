@@ -42,6 +42,8 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWi
     aiNavigationLastMoveMs = 0;
     aiMapNavigationEnabled = false;
     aiNavigationRestoreObserverOnFinish = false;
+    aiAutonomyExecutedCount = 0;
+    aiAutonomyLastCommand = "";
 
     // register types
     qRegisterMetaType<DirectionsList>("DirectionsList");    
@@ -221,6 +223,7 @@ void MainWindow::loadClient() {
     connect(aiBridgeService, SIGNAL(commandReceived(QString)), this, SLOT(actionCommand(QString)));
     connect(aiBridgeService, SIGNAL(statusMessage(QString)), this, SLOT(handleAiBridgeStatus(QString)));
     connect(aiBridgeService, SIGNAL(commandProposed(QString)), this, SLOT(handleAiCommandProposed(QString)));
+    connect(aiBridgeService, SIGNAL(autonomyActivated()), this, SLOT(handleAiAutonomyActivated()));
 
     aiNavigationTimer = new QTimer(this);
     aiNavigationTimer->setSingleShot(false);
@@ -471,6 +474,47 @@ void MainWindow::handleAiBridgeStatus(const QString& message) {
     QString safe = message.toHtmlEscaped();
     safe.replace("\n", "<br/>");
     emit writeMainWindow("<br/><span class=\"echo\">[AI] " + safe.toUtf8() + "</span><br/>");
+}
+
+void MainWindow::handleAiAutonomyActivated() {
+    if (aiBridgeService == NULL || !aiBridgeService->isAutonomyModeEnabled()) {
+        return;
+    }
+
+    const QStringList surveyCommands = {
+        "info",
+        "exp",
+        "look",
+        "inventory",
+        "encumbrance",
+        "assess"
+    };
+
+    emit writeMainWindow("<br/><span class=\"echo\">[AI] Autonomy startup: collecting player state and context...</span><br/>");
+
+    const int commandSpacingMs = 1800;
+    for (int index = 0; index < surveyCommands.size(); ++index) {
+        const QString command = surveyCommands.at(index);
+        QTimer::singleShot(index * commandSpacingMs, this, [this, command]() {
+            if (aiBridgeService == NULL || !aiBridgeService->isAutonomyModeEnabled()) {
+                return;
+            }
+            this->getCommandLine()->writeCommand(command);
+        });
+    }
+
+    const int advisoryDelayMs = surveyCommands.size() * commandSpacingMs + 3500;
+    QTimer::singleShot(advisoryDelayMs, this, [this]() {
+        if (aiBridgeService == NULL || !aiBridgeService->isAutonomyModeEnabled()) {
+            return;
+        }
+
+        aiBridgeService->requestAssistantResponse(
+            "Autonomy startup review: Use the recent player data (info, exp, look, inventory, encumbrance, assess) "
+            "to create a concise advisory. Then offer to execute one specific low-risk plan for the player now. "
+            "If the player accepts, include a short prioritized command sequence to run."
+        );
+    });
 }
 
 void MainWindow::startAiNavigation(const QString& destination) {
@@ -827,10 +871,236 @@ void MainWindow::actionCommand(const QString& command) {
     getCommandLine()->writeCommand(command);
 }
 
+bool MainWindow::isDefensiveAiCommand(const QString& command) const {
+    const QString clean = command.trimmed().toLower();
+    if (clean.isEmpty()) {
+        return false;
+    }
+
+    static const QStringList exactAllowlist = {
+        "retreat",
+        "flee",
+        "dodge",
+        "parry",
+        "evade",
+        "hide",
+        "stand",
+        "kneel",
+        "appraise focus",
+        "focus"
+    };
+    if (exactAllowlist.contains(clean)) {
+        return true;
+    }
+
+    static const QStringList prefixAllowlist = {
+        "stance ",
+        "wield ",
+        "get ",
+        "wear ",
+        "remove ",
+        "stow ",
+        "put ",
+        "eat ",
+        "apply ",
+        "rub ",
+        "drink ",
+        "cough",
+        "diagnose",
+        "assess"
+    };
+
+    for (const QString& prefix : prefixAllowlist) {
+        if (clean.startsWith(prefix)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool MainWindow::isTrainingAiCommand(const QString& command) const {
+    const QString clean = command.trimmed().toLower();
+    if (clean.isEmpty()) {
+        return false;
+    }
+
+    static const QStringList exactAllowlist = {
+        "exp",
+        "skills"
+    };
+    if (exactAllowlist.contains(clean)) {
+        return true;
+    }
+
+    static const QStringList prefixAllowlist = {
+        "forage",
+        "collect ",
+        "practice ",
+        "study ",
+        "analyze ",
+        "appraise "
+    };
+    for (const QString& prefix : prefixAllowlist) {
+        if (clean.startsWith(prefix)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool MainWindow::isExploreAiCommand(const QString& command) const {
+    const QString clean = command.trimmed().toLower();
+    if (clean.isEmpty()) {
+        return false;
+    }
+
+    static const QStringList exactAllowlist = {
+        "look",
+        "perceive",
+        "peer",
+        "search",
+        "out",
+        "north",
+        "south",
+        "east",
+        "west",
+        "northeast",
+        "northwest",
+        "southeast",
+        "southwest",
+        "up",
+        "down"
+    };
+    if (exactAllowlist.contains(clean)) {
+        return true;
+    }
+
+    static const QStringList prefixAllowlist = {
+        "go ",
+        "climb ",
+        "swim "
+    };
+    for (const QString& prefix : prefixAllowlist) {
+        if (clean.startsWith(prefix)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool MainWindow::isSocialAiCommand(const QString& command) const {
+    const QString clean = command.trimmed().toLower();
+    if (clean.isEmpty()) {
+        return false;
+    }
+
+    static const QStringList exactAllowlist = {
+        "smile",
+        "nod",
+        "wave",
+        "bow",
+        "greet"
+    };
+    if (exactAllowlist.contains(clean)) {
+        return true;
+    }
+
+    static const QStringList prefixAllowlist = {
+        "say ",
+        "ask ",
+        "whisper "
+    };
+    for (const QString& prefix : prefixAllowlist) {
+        if (clean.startsWith(prefix)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool MainWindow::isAutonomyCommandAllowed(const QString& command, const QStringList& switches) const {
+    const QString clean = command.trimmed().toLower();
+    if (clean.isEmpty()) {
+        return false;
+    }
+
+    static const QStringList denyPrefixes = {
+        "attack",
+        "advance",
+        "ambush",
+        "cast ",
+        "target ",
+        "khri ",
+        "invoke ",
+        "hunt"
+    };
+    for (const QString& prefix : denyPrefixes) {
+        if (clean.startsWith(prefix)) {
+            return false;
+        }
+    }
+
+    if (switches.contains("defend") && this->isDefensiveAiCommand(clean)) {
+        return true;
+    }
+    if (switches.contains("train") && this->isTrainingAiCommand(clean)) {
+        return true;
+    }
+    if (switches.contains("explore") && this->isExploreAiCommand(clean)) {
+        return true;
+    }
+    if (switches.contains("socialize") && this->isSocialAiCommand(clean)) {
+        return true;
+    }
+
+    return false;
+}
+
+QString MainWindow::getAiAutonomyRuntimeStatus() const {
+    const bool enabled = aiBridgeService != NULL && aiBridgeService->isAutonomyModeEnabled();
+    const QString switches = aiBridgeService != NULL ? aiBridgeService->autonomySwitchSummary() : QString("(none)");
+    const QString last = aiAutonomyLastCommand.isEmpty() ? QString("(none)") : aiAutonomyLastCommand;
+    return QString("Autonomy mode is %1. Switches: %2. Executed: %3. Last: %4")
+        .arg(enabled ? "enabled" : "disabled")
+        .arg(switches)
+        .arg(aiAutonomyExecutedCount)
+        .arg(last);
+}
+
 void MainWindow::handleAiCommandProposed(const QString& command) {
     const QString clean = command.trimmed();
     if (clean.isEmpty()) {
         return;
+    }
+
+    const bool autonomyEnabled = aiBridgeService != NULL && aiBridgeService->isAutonomyModeEnabled();
+    if (autonomyEnabled) {
+        QStringList switches;
+        if (aiBridgeService != NULL) {
+            switches = aiBridgeService->autonomySwitches();
+        }
+        if (switches.isEmpty()) {
+            switches.append("defend");
+        }
+
+        if (this->isAutonomyCommandAllowed(clean, switches)) {
+            this->getCommandLine()->writeCommand(clean);
+            aiAutonomyExecutedCount++;
+            aiAutonomyLastCommand = clean;
+            emit writeMainWindow(
+                "<br/><span class=\"echo\">[AI] Autonomy executed #" + QByteArray::number(aiAutonomyExecutedCount) +
+                " command: " +
+                clean.toHtmlEscaped().toUtf8() + "</span><br/>");
+            return;
+        }
+
+        emit writeMainWindow(
+            "<br/><span class=\"echo\">[AI] Autonomy blocked command (not allowed by active switches); approval required: " +
+            clean.toHtmlEscaped().toUtf8() + "</span><br/>");
     }
 
     const int id = nextAiCommandId++;

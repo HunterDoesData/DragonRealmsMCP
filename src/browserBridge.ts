@@ -30,6 +30,8 @@ export type AssistantRespondRequest = {
   context?: string;
   systemPrompt?: string;
   source?: string;
+  autonomyMode?: boolean;
+  autonomySwitches?: string[];
 };
 
 export type AssistantRespondResult = {
@@ -281,6 +283,10 @@ export class BrowserBridge {
       const context = typeof req.body?.context === "string" ? req.body.context.trim() : "";
       const systemPrompt = typeof req.body?.systemPrompt === "string" ? req.body.systemPrompt.trim() : "";
       const source = typeof req.body?.source === "string" ? req.body.source.trim() : "bridge";
+      const autonomyMode = req.body?.autonomyMode === true;
+      const autonomySwitches = Array.isArray(req.body?.autonomySwitches)
+        ? req.body.autonomySwitches.filter((item: unknown): item is string => typeof item === "string")
+        : undefined;
 
       if (!prompt) {
         res.status(400).json({ error: "Body must contain non-empty 'prompt'." });
@@ -292,7 +298,9 @@ export class BrowserBridge {
           prompt,
           context: context || undefined,
           systemPrompt: systemPrompt || undefined,
-          source
+          source,
+          autonomyMode,
+          autonomySwitches
         });
         res.json({ ok: true, response });
       } catch (error) {

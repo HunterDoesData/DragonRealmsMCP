@@ -1,6 +1,7 @@
 #include "commandline.h"
 
 #include <QScrollBar>
+#include <QRegularExpression>
 
 #include "mainwindow.h"
 #include "roundtimedisplay.h"
@@ -314,6 +315,27 @@ bool CommandLine::filterCommand(QString text) {
         } else {
             const bool enabled = mainWindow->getAiBridgeService()->isObserverModeEnabled();
             mainWindow->handleAiBridgeStatus(QString("Observer mode is %1.").arg(enabled ? "enabled" : "disabled"));
+        }
+        this->clear();
+        return true;
+    } else if (text.startsWith("/aiautonomy")) {
+        const QString value = text.mid(QString("/aiautonomy").length()).trimmed().toLower();
+        if (value == "on") {
+            mainWindow->getAiBridgeService()->setAutonomyMode(true);
+        } else if (value == "off") {
+            mainWindow->getAiBridgeService()->setAutonomyMode(false);
+        } else if (!value.isEmpty() && value != "status") {
+            const QStringList parts = value.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
+            if (parts.size() == 2 && (parts.at(1) == "on" || parts.at(1) == "off")) {
+                const bool ok = mainWindow->getAiBridgeService()->setAutonomySwitch(parts.at(0), parts.at(1) == "on");
+                if (!ok) {
+                    mainWindow->handleAiBridgeStatus("Unknown autonomy switch. Use: defend, train, explore, socialize.");
+                }
+            } else {
+                mainWindow->handleAiBridgeStatus("Usage: /aiautonomy on|off|status|<defend|train|explore|socialize> on|off");
+            }
+        } else {
+            mainWindow->handleAiBridgeStatus(mainWindow->getAiAutonomyRuntimeStatus());
         }
         this->clear();
         return true;

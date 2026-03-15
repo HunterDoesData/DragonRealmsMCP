@@ -27,12 +27,18 @@ public:
     void showAssistantModel();
     void setObserverMode(bool enabled);
     bool isObserverModeEnabled() const;
+    void setAutonomyMode(bool enabled);
+    bool isAutonomyModeEnabled() const;
+    bool setAutonomySwitch(const QString& name, bool enabled);
+    QStringList autonomySwitches() const;
+    QString autonomySwitchSummary() const;
     bool isEnabled() const;
 
 signals:
     void commandReceived(const QString& command);
     void commandProposed(const QString& command);
     void statusMessage(const QString& message);
+    void autonomyActivated();
 
 private slots:
     void pollCommands();
@@ -56,6 +62,8 @@ private:
     int bridgePort() const;
     QString configuredProvider() const;
     QString configuredModel() const;
+    QString normalizeAutonomySwitch(const QString& name) const;
+    QStringList supportedAutonomySwitches() const;
 
     ClientSettings* settings;
     QNetworkAccessManager* network;
@@ -72,6 +80,8 @@ private:
     bool healthOk;
     bool healthKnown;
     bool observerEnabled;
+    bool autonomyEnabled;
+    QStringList autonomySwitchList;
     bool observerRequestInFlight;
     qint64 lastObserverRequestMs;
     QString lastObserverEventFingerprint;

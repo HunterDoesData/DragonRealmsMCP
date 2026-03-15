@@ -31,6 +31,19 @@ const aiModel =
 
 type ChatMessage = { role: "system" | "user" | "assistant"; content: string };
 
+function normalizeAutonomySwitches(input: string[] | undefined): string[] {
+  const supported = new Set(["defend", "train", "explore", "socialize"]);
+  const deduped: string[] = [];
+  for (const raw of input ?? []) {
+    const value = raw.trim().toLowerCase();
+    if (!supported.has(value) || deduped.includes(value)) {
+      continue;
+    }
+    deduped.push(value);
+  }
+  return deduped;
+}
+
 function extractJsonObject(text: string): Record<string, unknown> | undefined {
   const start = text.indexOf("{");
   const end = text.lastIndexOf("}");
@@ -68,6 +81,88 @@ function parseCommandLines(answer: string): { answer: string; commands: string[]
     answer: narrative.join("\n").trim(),
     commands
   };
+}
+
+function normalizeCommands(commands: string[]): string[] {
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+  for (const raw of commands) {
+    const command = raw.trim();
+    if (!command) {
+      continue;
+    }
+    const key = command.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    normalized.push(command);
+  }
+  return normalized;
+}
+
+function isSkillAnalysisRequest(prompt: string): boolean {
+  const lowered = prompt.toLowerCase();
+  return (
+    /\b(analy[sz]e|assess|review|advise|plan|optimi[sz]e)\b/.test(lowered) &&
+    /\b(skill|skills|experience|exp|training|train)\b/.test(lowered)
+  );
+}
+
+function hasSkillSnapshot(context: string): boolean {
+  const lowered = context.toLowerCase();
+  return (
+    /\bmind lock\b/.test(lowered) ||
+    /\bclear\b/.test(lowered) ||
+    /\branks?\b/.test(lowered) ||
+    /\blearning\b/.test(lowered) ||
+    /\bexp(?:erience)?\b/.test(lowered)
+  );
+}
+
+function inferAutonomyFallbackCommands(prompt: string, context: string, answer: string, autonomySwitches: string[]): string[] {
+  const combined = `${prompt}\n${context}\n${answer}`.toLowerCase();
+  const active = autonomySwitches.length > 0 ? autonomySwitches : ["defend"];
+  const has = (name: string) => active.includes(name);
+
+  if (has("defend") && /\b(melee|engaged|opponent|balance|stance|attacking|combat|lout|creature|foe)\b/.test(combined)) {
+    return ["assess", "stance evade"];
+  }
+
+  if (has("defend") && /\b(bleed|bleeding|stunned|stun|hurt|injured|wounded|dying)\b/.test(combined)) {
+    return ["retreat", "assess"]; 
+  }
+
+  if (has("train") && /\b(train|training|survival|forage|foraging|collect|herb|herbs|botany)\b/.test(combined)) {
+    return ["forage", "collect herb"]; 
+  }
+
+  if (has("train") && /\b(skill|skills|experience|exp)\b/.test(combined)) {
+    return ["exp", "skills"];
+  }
+
+  if (has("explore") && /\b(where|location|map|route|path|travel|move|go|explore|scout|hunt)\b/.test(combined)) {
+    return ["look", "perceive"]; 
+  }
+
+  if (has("socialize") && /\b(say|ask|talk|speak|social|group|party|player|hello|hi)\b/.test(combined)) {
+    return ["say Hello!", "smile"]; 
+  }
+
+  if (has("defend")) {
+    return ["assess"];
+  }
+  if (has("explore")) {
+    return ["look"];
+  }
+  if (has("train")) {
+    return ["exp", "skills"];
+  }
+  if (has("socialize")) {
+    return ["smile"];
+  }
+
+  return ["assess"];
 }
 
 async function providerChat(messages: ChatMessage[]): Promise<string> {
@@ -151,6 +246,9 @@ async function respondWithAssistant(input: AssistantRespondRequest): Promise<Ass
   const prompt = input.prompt.trim();
   const context = (input.context ?? "").trim();
   const systemPrompt = (input.systemPrompt ?? "").trim();
+  const autonomyMode = input.autonomyMode === true;
+  const autonomySwitches = normalizeAutonomySwitches(input.autonomySwitches);
+  const activeAutonomySwitches = autonomySwitches.length > 0 ? autonomySwitches : ["defend"];
 
   const plannerSystem =
     "You are a routing planner. Return strict JSON only: {\"useRag\":boolean,\"ragQuery\":string}. " +
@@ -198,10 +296,35 @@ async function respondWithAssistant(input: AssistantRespondRequest): Promise<Ass
     }
   }
 
+  const needsSkillSnapshot = isSkillAnalysisRequest(prompt) && !hasSkillSnapshot(context);
+
   const finalSystem = [
     systemPrompt || "You are a DragonRealms gameplay coach.",
-    "If useful, provide one actionable command line prefixed exactly as 'CMD: '.",
-    "Stay concise and practical for live gameplay."
+    "You can propose local game commands the player should run next.",
+    "When player asks for analysis/advice, emit all commands needed to gather missing data first.",
+    autonomyMode
+      ? "Autonomy mode is ON: prioritize defensive/survival-safe commands first. Avoid aggressive/combat-initiating actions unless explicitly requested."
+      : "",
+    autonomyMode ? `Active autonomy switches: ${activeAutonomySwitches.join(", ")}.` : "",
+    autonomyMode && activeAutonomySwitches.includes("train")
+      ? "When useful, include low-risk training progression commands."
+      : "",
+    autonomyMode && activeAutonomySwitches.includes("explore")
+      ? "When useful, include low-risk scouting/location awareness commands."
+      : "",
+    autonomyMode && activeAutonomySwitches.includes("socialize")
+      ? "When useful, include short polite social commands appropriate for nearby players."
+      : "",
+    "Return strict JSON only with this exact shape:",
+    "{\"answer\": string, \"commands\": string[]}",
+    "Rules:",
+    "- commands must be plain in-game commands only (no CMD: prefix, no explanations)",
+    "- include up to 6 commands, ordered by priority",
+    autonomyMode
+      ? "- autonomy is enabled: if there is any actionable step, commands must include at least one executable command"
+      : "",
+    "- if no commands are needed, return an empty array",
+    "- keep answer concise and practical"
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -209,7 +332,13 @@ async function respondWithAssistant(input: AssistantRespondRequest): Promise<Ass
   const finalUser = [
     `Player request:\n${prompt}`,
     `Recent game context:\n${context || "(none)"}`,
-    ragUsed ? `Tool result elanthipedia_rag_query:\n${ragBlock}` : "Tool result elanthipedia_rag_query: (not used)"
+    ragUsed ? `Tool result elanthipedia_rag_query:\n${ragBlock}` : "Tool result elanthipedia_rag_query: (not used)",
+    autonomyMode
+      ? `Autonomy mode: ON (defensive auto-execution on client). Active switches: ${activeAutonomySwitches.join(", ")}.`
+      : "Autonomy mode: OFF.",
+    needsSkillSnapshot
+      ? "Note: Skill-analysis request detected but no reliable skill snapshot in context. Include commands to gather skill/experience data first."
+      : ""
   ].join("\n\n");
 
   const modelReply = await providerChat([
@@ -217,10 +346,48 @@ async function respondWithAssistant(input: AssistantRespondRequest): Promise<Ass
     { role: "user", content: finalUser }
   ]);
 
-  const parsed = parseCommandLines(modelReply);
+  let answer = "";
+  let commands: string[] = [];
+
+  const structured = extractJsonObject(modelReply);
+  if (structured) {
+    const rawAnswer = structured.answer;
+    if (typeof rawAnswer === "string") {
+      answer = rawAnswer.trim();
+    }
+
+    const rawCommands = structured.commands;
+    if (Array.isArray(rawCommands)) {
+      commands = rawCommands
+        .filter((item): item is string => typeof item === "string")
+        .map((item) => item.trim())
+        .filter((item) => item.length > 0);
+    }
+  }
+
+  if (!answer || commands.length === 0) {
+    const parsed = parseCommandLines(modelReply);
+    if (!answer) {
+      answer = parsed.answer;
+    }
+    if (commands.length === 0) {
+      commands = parsed.commands;
+    }
+  }
+
+  commands = normalizeCommands(commands);
+
+  if (needsSkillSnapshot && commands.length === 0) {
+    commands = ["exp", "skills"];
+  }
+
+  if (autonomyMode && commands.length === 0) {
+    commands = normalizeCommands(inferAutonomyFallbackCommands(prompt, context, answer, activeAutonomySwitches));
+  }
+
   return {
-    answer: parsed.answer || "(No narrative response.)",
-    proposedCommands: parsed.commands,
+    answer: answer || "(No narrative response.)",
+    proposedCommands: commands,
     provider: aiProvider,
     model: aiModel,
     ragUsed

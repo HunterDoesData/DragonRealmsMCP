@@ -35,6 +35,7 @@ AiBridgeService::AiBridgeService(QObject* parent)
       healthOk(false),
       healthKnown(false),
     observerEnabled(false),
+        autonomyEnabled(false),
     observerRequestInFlight(false),
     lastObserverRequestMs(0),
             lastObserverEventFingerprint(""),
@@ -196,6 +197,15 @@ QString AiBridgeService::configuredModel() const {
     return QString("gpt-4o-mini");
 }
 
+QStringList AiBridgeService::supportedAutonomySwitches() const {
+    return QStringList() << "defend" << "train" << "explore" << "socialize";
+}
+
+QString AiBridgeService::normalizeAutonomySwitch(const QString& name) const {
+    const QString normalized = name.trimmed().toLower();
+    return this->supportedAutonomySwitches().contains(normalized) ? normalized : QString();
+}
+
 void AiBridgeService::reloadSettings() {
     const bool wasEnabled = enabled;
 
@@ -205,6 +215,19 @@ void AiBridgeService::reloadSettings() {
     runInternalMcp = settings->getParameter("AiBridge/runInternalMcp", true).toBool();
     embeddedMode = settings->getParameter("AiBridge/embeddedMode", true).toBool();
     observerEnabled = settings->getParameter("AiBridge/observerEnabled", false).toBool();
+    autonomyEnabled = settings->getParameter("AiBridge/autonomyEnabled", false).toBool();
+    autonomySwitchList = settings->getParameter("AiBridge/autonomySwitches", QStringList() << "defend").toStringList();
+    QStringList normalizedSwitches;
+    const QStringList supported = this->supportedAutonomySwitches();
+    for (const QString& item : autonomySwitchList) {
+        const QString normalized = item.trimmed().toLower();
+        if (!supported.contains(normalized) || normalizedSwitches.contains(normalized)) {
+            continue;
+        }
+        normalizedSwitches.append(normalized);
+    }
+    autonomySwitchList = normalizedSwitches;
+    settings->setParameter("AiBridge/autonomySwitches", autonomySwitchList);
     pollIntervalMs = settings->getParameter("AiBridge/pollIntervalMs", 1200).toInt();
     baseUrl = settings->getQStringNotBlank("AiBridge/baseUrl", "http://127.0.0.1:8787");
     token = settings->getParameter("AiBridge/token", "").toString().trimmed();
@@ -260,6 +283,59 @@ void AiBridgeService::setObserverMode(bool enabledValue) {
 
 bool AiBridgeService::isObserverModeEnabled() const {
     return observerEnabled;
+}
+
+void AiBridgeService::setAutonomyMode(bool enabledValue) {
+    const bool wasEnabled = autonomyEnabled;
+    autonomyEnabled = enabledValue;
+    settings->setParameter("AiBridge/autonomyEnabled", enabledValue);
+    if (enabledValue && !observerEnabled) {
+        observerEnabled = true;
+        settings->setParameter("AiBridge/observerEnabled", true);
+    }
+    emit statusMessage(QString("Autonomy mode %1. Observer mode %2. Active switches: %3")
+                           .arg(enabledValue ? "enabled" : "disabled",
+                                observerEnabled ? "enabled" : "disabled",
+                                this->autonomySwitchSummary()));
+
+    if (!wasEnabled && enabledValue) {
+        emit autonomyActivated();
+    }
+}
+
+bool AiBridgeService::isAutonomyModeEnabled() const {
+    return autonomyEnabled;
+}
+
+bool AiBridgeService::setAutonomySwitch(const QString& name, bool enabledValue) {
+    const QString normalized = this->normalizeAutonomySwitch(name);
+    if (normalized.isEmpty()) {
+        return false;
+    }
+
+    if (enabledValue) {
+        if (!autonomySwitchList.contains(normalized)) {
+            autonomySwitchList.append(normalized);
+        }
+    } else {
+        autonomySwitchList.removeAll(normalized);
+    }
+
+    settings->setParameter("AiBridge/autonomySwitches", autonomySwitchList);
+    emit statusMessage(QString("Autonomy switch '%1' %2. Active switches: %3")
+                           .arg(normalized, enabledValue ? "enabled" : "disabled", this->autonomySwitchSummary()));
+    return true;
+}
+
+QStringList AiBridgeService::autonomySwitches() const {
+    return autonomySwitchList;
+}
+
+QString AiBridgeService::autonomySwitchSummary() const {
+    if (autonomySwitchList.isEmpty()) {
+        return QString("(none)");
+    }
+    return autonomySwitchList.join(", ");
 }
 
 void AiBridgeService::updateInternalMcpState() {
@@ -455,7 +531,7 @@ void AiBridgeService::maybeRunObserverTick(const QString& cleanText, bool prompt
 }
 
 void AiBridgeService::showAssistantHelp() {
-    emit statusMessage("Commands: /ai <prompt>, /aiwiki <topic>, /aimodel, /aiobserve on|off|status, /aigo <location>, /airoute <location>, /aimapnav on|off|status, /aistop, /aipending, /aiapprove [id], /aireject [id], /aihelp");
+    emit statusMessage("Commands: /ai <prompt>, /aiwiki <topic>, /aimodel, /aiobserve on|off|status, /aiautonomy on|off|status|<defend|train|explore|socialize> on|off, /aigo <location>, /airoute <location>, /aimapnav on|off|status, /aistop, /aipending, /aiapprove [id], /aireject [id], /aihelp");
 }
 
 void AiBridgeService::showAssistantModel() {
@@ -499,6 +575,12 @@ void AiBridgeService::requestAssistantResponse(const QString& prompt) {
         bridgeBody.insert("context", contextBlock);
         bridgeBody.insert("systemPrompt", systemPrompt);
         bridgeBody.insert("source", "frostbite");
+        bridgeBody.insert("autonomyMode", autonomyEnabled);
+        QJsonArray autonomySwitchesJson;
+        for (const QString& item : autonomySwitchList) {
+            autonomySwitchesJson.append(item);
+        }
+        bridgeBody.insert("autonomySwitches", autonomySwitchesJson);
 
         emit statusMessage(QString("Thinking (%1 via MCP)...").arg(provider));
         QNetworkReply* bridgeReply = network->post(bridgeRequest, QJsonDocument(bridgeBody).toJson(QJsonDocument::Compact));

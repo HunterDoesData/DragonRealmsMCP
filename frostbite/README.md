@@ -68,6 +68,7 @@ Additional in-game commands:
 /aihelp
 /aiwiki <topic>
 /aiobserve on|off|status
+/aiautonomy on|off|status
 /aipending
 /aiapprove [id]
 /aireject [id]
@@ -79,6 +80,7 @@ Additional in-game commands:
 - `/ai` now includes recent in-game output context automatically so the coach can see current game state.
 - The assistant is constrained with a DragonRealms-only coaching system prompt and refuses non-DragonRealms requests.
 - The assistant can propose executable commands using `CMD:`; commands are queued for explicit player approval via `/aiapprove`.
+- With `/aiautonomy on`, Frostbite auto-executes only defensive AI-proposed commands; non-defensive commands are still queued for manual approval.
 - Observer mode allows periodic proactive coaching based on live prompt/output updates.
 - `/aiwiki` pulls Elanthipedia API content directly inside Frostbite for game-specific learning support.
 
