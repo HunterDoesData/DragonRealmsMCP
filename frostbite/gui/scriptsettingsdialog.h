@@ -21,7 +21,10 @@ public:
 
 private:    
     void loadSettings();
+    QString resolveOllamaExecutable() const;
     QStringList detectOllamaModels() const;
+    bool isLikelyUnsuitableAgentModel(const QString& modelName) const;
+    bool isAgentCapableOllamaModel(const QString& ollamaExecutable, const QString& modelName) const;
     void loadOllamaModels(bool preserveCurrentSelection = true);
 
     void saveChanges();

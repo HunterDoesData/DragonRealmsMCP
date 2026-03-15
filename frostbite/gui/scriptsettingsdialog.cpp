@@ -5,8 +5,12 @@
 #include "clientsettings.h"
 #include "defaultvalues.h"
 
+#include <QJsonDocument>
+#include <QJsonArray>
+#include <QJsonObject>
 #include <QProcess>
 #include <QRegularExpression>
+#include <QStandardPaths>
 
 ScriptSettingsDialog::ScriptSettingsDialog(QWidget *parent) : QDialog(parent), ui(new Ui::ScriptSettingsDialog) {
     ui->setupUi(this);
@@ -125,8 +129,13 @@ ScriptSettingsDialog::ScriptSettingsDialog(QWidget *parent) : QDialog(parent), u
 }
 
 QStringList ScriptSettingsDialog::detectOllamaModels() const {
+    const QString ollamaExecutable = this->resolveOllamaExecutable();
+    if (ollamaExecutable.isEmpty()) {
+        return QStringList();
+    }
+
     QProcess process;
-    process.start("ollama", QStringList() << "list");
+    process.start(ollamaExecutable, QStringList() << "list" << "--json");
 
     if (!process.waitForStarted(800)) {
         return QStringList();
@@ -139,32 +148,75 @@ QStringList ScriptSettingsDialog::detectOllamaModels() const {
     }
 
     if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0) {
-        return QStringList();
+        QProcess fallbackProcess;
+        fallbackProcess.start(ollamaExecutable, QStringList() << "list");
+        if (!fallbackProcess.waitForStarted(800)) {
+            return QStringList();
+        }
+        if (!fallbackProcess.waitForFinished(5000)) {
+            fallbackProcess.kill();
+            fallbackProcess.waitForFinished(1000);
+            return QStringList();
+        }
+        if (fallbackProcess.exitStatus() != QProcess::NormalExit || fallbackProcess.exitCode() != 0) {
+            return QStringList();
+        }
+
+        const QString fallbackOutput = QString::fromUtf8(fallbackProcess.readAllStandardOutput());
+        QStringList fallbackModels;
+        const QStringList fallbackLines = fallbackOutput.split('\n', Qt::SkipEmptyParts);
+        bool sawHeader = false;
+        for (const QString& rawLine : fallbackLines) {
+            const QString line = rawLine.trimmed();
+            if (line.isEmpty()) {
+                continue;
+            }
+
+            if (!sawHeader) {
+                sawHeader = true;
+                if (line.startsWith("NAME", Qt::CaseInsensitive)) {
+                    continue;
+                }
+            }
+
+            const QStringList parts = line.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
+            if (parts.isEmpty()) {
+                continue;
+            }
+
+            const QString model = parts.first().trimmed();
+            if (!model.isEmpty() && !fallbackModels.contains(model)) {
+                fallbackModels.append(model);
+            }
+        }
+        fallbackModels.sort(Qt::CaseInsensitive);
+        return fallbackModels;
     }
 
     const QString output = QString::fromUtf8(process.readAllStandardOutput());
     QStringList models;
     const QStringList lines = output.split('\n', Qt::SkipEmptyParts);
-    bool sawHeader = false;
     for (const QString& rawLine : lines) {
         const QString line = rawLine.trimmed();
         if (line.isEmpty()) {
             continue;
         }
 
-        if (!sawHeader) {
-            sawHeader = true;
-            if (line.startsWith("NAME", Qt::CaseInsensitive)) {
-                continue;
-            }
-        }
-
-        const QStringList parts = line.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
-        if (parts.isEmpty()) {
+        QJsonParseError parseError;
+        const QJsonDocument doc = QJsonDocument::fromJson(line.toUtf8(), &parseError);
+        if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
             continue;
         }
 
-        const QString model = parts.first().trimmed();
+        const QJsonObject obj = doc.object();
+        QString model = obj.value("name").toString().trimmed();
+        if (model.isEmpty()) {
+            model = obj.value("model").toString().trimmed();
+        }
+        if (model.isEmpty()) {
+            continue;
+        }
+
         if (!model.isEmpty() && !models.contains(model)) {
             models.append(model);
         }
@@ -174,20 +226,164 @@ QStringList ScriptSettingsDialog::detectOllamaModels() const {
     return models;
 }
 
+QString ScriptSettingsDialog::resolveOllamaExecutable() const {
+    const QString discovered = QStandardPaths::findExecutable("ollama");
+    if (!discovered.isEmpty()) {
+        return discovered;
+    }
+
+    const QStringList fallbacks = {
+        "/opt/homebrew/bin/ollama",
+        "/usr/local/bin/ollama"
+    };
+
+    for (const QString& candidate : fallbacks) {
+        if (QFileInfo::exists(candidate)) {
+            return candidate;
+        }
+    }
+
+    return QString();
+}
+
+bool ScriptSettingsDialog::isLikelyUnsuitableAgentModel(const QString& modelName) const {
+    const QString lowered = modelName.trimmed().toLower();
+    if (lowered.isEmpty()) {
+        return true;
+    }
+
+    const QStringList unsuitableTokens = {
+        "embed",
+        "embedding",
+        "nomic-embed",
+        "bge",
+        "e5",
+        "rerank"
+    };
+
+    for (const QString& token : unsuitableTokens) {
+        if (lowered.contains(token)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool ScriptSettingsDialog::isAgentCapableOllamaModel(const QString& ollamaExecutable, const QString& modelName) const {
+    if (ollamaExecutable.isEmpty() || modelName.trimmed().isEmpty()) {
+        return false;
+    }
+
+    QProcess showProcess;
+    showProcess.start(ollamaExecutable, QStringList() << "show" << modelName << "--json");
+    if (showProcess.waitForStarted(700) && showProcess.waitForFinished(2500)
+        && showProcess.exitStatus() == QProcess::NormalExit
+        && showProcess.exitCode() == 0) {
+        const QByteArray payload = showProcess.readAllStandardOutput();
+
+        QJsonParseError parseError;
+        const QJsonDocument doc = QJsonDocument::fromJson(payload, &parseError);
+        if (parseError.error == QJsonParseError::NoError && doc.isObject()) {
+            const QJsonObject root = doc.object();
+
+            const QJsonValue capabilitiesValue = root.value("capabilities");
+            if (capabilitiesValue.isArray()) {
+                const QJsonArray capabilities = capabilitiesValue.toArray();
+                bool hasCompletionLike = false;
+                bool hasEmbeddingOnly = false;
+                for (const QJsonValue& item : capabilities) {
+                    const QString capability = item.toString().trimmed().toLower();
+                    if (capability.contains("chat") || capability.contains("completion") || capability.contains("generate")) {
+                        hasCompletionLike = true;
+                    }
+                    if (capability.contains("embed")) {
+                        hasEmbeddingOnly = true;
+                    }
+                }
+                if (hasCompletionLike) {
+                    return true;
+                }
+                if (hasEmbeddingOnly) {
+                    return false;
+                }
+            }
+
+            const QString templateText = root.value("template").toString().trimmed();
+            if (!templateText.isEmpty()) {
+                return true;
+            }
+        }
+
+        const QString loweredPayload = QString::fromUtf8(payload).toLower();
+        if (loweredPayload.contains("capabilities")
+            && loweredPayload.contains("embed")
+            && !loweredPayload.contains("chat")
+            && !loweredPayload.contains("completion")
+            && !loweredPayload.contains("generate")) {
+            return false;
+        }
+    }
+
+    QProcess modelfileProcess;
+    modelfileProcess.start(ollamaExecutable, QStringList() << "show" << modelName << "--modelfile");
+    if (modelfileProcess.waitForStarted(700) && modelfileProcess.waitForFinished(2500)
+        && modelfileProcess.exitStatus() == QProcess::NormalExit
+        && modelfileProcess.exitCode() == 0) {
+        const QString modelfileText = QString::fromUtf8(modelfileProcess.readAllStandardOutput()).toLower();
+        if (modelfileText.contains("template")) {
+            return true;
+        }
+        if (modelfileText.contains("embed")) {
+            return false;
+        }
+    }
+
+    return !this->isLikelyUnsuitableAgentModel(modelName);
+}
+
 void ScriptSettingsDialog::loadOllamaModels(bool preserveCurrentSelection) {
     const QString previousValue = preserveCurrentSelection
                                       ? ui->ollamaModelInput->currentText().trimmed()
                                       : settings->getParameter("AiBridge/ollamaModel", "deepseek-r1:8b").toString().trimmed();
 
+    const QString ollamaExecutable = this->resolveOllamaExecutable();
     const QStringList detectedModels = detectOllamaModels();
+    QStringList filteredModels;
+    int filteredOutCount = 0;
+    for (const QString& model : detectedModels) {
+        if (this->isLikelyUnsuitableAgentModel(model)) {
+            filteredOutCount++;
+            continue;
+        }
+        if (!this->isAgentCapableOllamaModel(ollamaExecutable, model)) {
+            filteredOutCount++;
+            continue;
+        }
+        filteredModels.append(model);
+    }
+
+    const bool usedFallbackAllModels = filteredModels.isEmpty() && !detectedModels.isEmpty();
+    const QStringList displayedModels = usedFallbackAllModels ? detectedModels : filteredModels;
+
     ui->ollamaModelInput->blockSignals(true);
     ui->ollamaModelInput->clear();
 
-    if (!detectedModels.isEmpty()) {
-        ui->ollamaModelInput->addItems(detectedModels);
-        ui->ollamaModelInput->setToolTip("Detected from local 'ollama list'.");
+    if (!displayedModels.isEmpty()) {
+        ui->ollamaModelInput->addItems(displayedModels);
+        if (usedFallbackAllModels) {
+            ui->ollamaModelInput->setToolTip("No clearly chat-capable models detected; showing all local models.");
+            ui->ollamaModelHintLabel->setText("No clearly chat-capable models detected. Showing all local models.");
+        } else if (filteredOutCount > 0) {
+            ui->ollamaModelInput->setToolTip("Showing agent-capable models from local Ollama.");
+            ui->ollamaModelHintLabel->setText(QString("Showing agent-capable models (%1 filtered as unsuitable).").arg(filteredOutCount));
+        } else {
+            ui->ollamaModelInput->setToolTip("Showing agent-capable models from local Ollama.");
+            ui->ollamaModelHintLabel->setText("Showing agent-capable models from local Ollama.");
+        }
     } else {
         ui->ollamaModelInput->setToolTip("No local models detected. Install with 'ollama pull <model>'.");
+        ui->ollamaModelHintLabel->setText("No local Ollama models detected. Install with: ollama pull <model>");
     }
 
     if (!previousValue.isEmpty()) {
