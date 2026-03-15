@@ -15,8 +15,9 @@ Frostbite can stream game output to a local bridge, optionally consume queued co
 1. In Frostbite open `Tools -> Script settings -> AI`.
 2. Configure:
 	- `Run MCP server internally` (enabled)
-	- `LLM provider` (`openai` or `anthropic`)
-	- matching API key
+	- `LLM provider` (`openai`, `anthropic`, or `ollama`)
+	- matching API key (for `openai`/`anthropic`)
+	- `Ollama model` (auto-detected from local `ollama list`, refreshable)
 	- `MCP server entry` (typically `/.../DragonRealmsMCP/dist/index.js`)
 	- `Node executable` (usually `node`)
 3. Ensure `AiBridge` settings point at your local bridge port (default now `3989`).
@@ -33,6 +34,7 @@ consumeCommands=false
 pollIntervalMs=1200
 runInternalMcp=true
 llmProvider=openai
+ollamaModel=deepseek-r1:8b
 openAiApiKey=
 anthropicApiKey=
 mcpEntryPath=
@@ -49,6 +51,7 @@ Safety defaults:
 - Set `consumeCommands=true` only when you want queued commands auto-applied.
 - If you configured `DR_BRIDGE_TOKEN`, set the same value in `AiBridge/token`.
 - On settings apply, Frostbite reloads AI bridge settings and starts/stops the internal MCP process.
+- To run `/ai` through MCP tool-assisted flow (including local Elanthipedia pgvector retrieval), set `embeddedMode=false` in AI settings.
 
 ### In-game AI prompt command
 

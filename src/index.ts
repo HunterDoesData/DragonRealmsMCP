@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { BrowserBridge } from "./browserBridge.js";
+import { BrowserBridge, type AssistantRespondRequest, type AssistantRespondResult } from "./browserBridge.js";
 import { getElanthipediaPage, getGuildSkills, getSkill, searchElanthipedia } from "./elanthipedia.js";
 import { queryPgvector } from "./rag/pgvectorSearch.js";
 
@@ -10,11 +10,227 @@ const SERVER_VERSION = "0.1.0";
 
 const bridgePort = Number(process.env.DR_BRIDGE_PORT ?? "3989");
 const bridgeToken = process.env.DR_BRIDGE_TOKEN;
-const bridge = new BrowserBridge({ token: bridgeToken });
 const ragMinSimilarity = Math.max(
   0,
   Math.min(1, Number(process.env.RAG_MIN_SIMILARITY ?? "0.58"))
 );
+
+const aiProvider = (process.env.AI_LLM_PROVIDER ?? "openai").trim().toLowerCase();
+const aiModelFromEnv = (process.env.AI_LLM_MODEL ?? "").trim();
+const aiOllamaBaseUrl = (process.env.AI_OLLAMA_BASE_URL ?? "http://127.0.0.1:11434").replace(/\/$/, "");
+const openAiApiKey = (process.env.OPENAI_API_KEY ?? process.env.OPENAIKEY ?? "").trim();
+const anthropicApiKey = (process.env.ANTHROPIC_API_KEY ?? "").trim();
+
+const aiModel =
+  aiModelFromEnv ||
+  (aiProvider === "anthropic"
+    ? "claude-3-5-haiku-latest"
+    : aiProvider === "ollama"
+      ? "deepseek-r1:8b"
+      : "gpt-4o-mini");
+
+type ChatMessage = { role: "system" | "user" | "assistant"; content: string };
+
+function extractJsonObject(text: string): Record<string, unknown> | undefined {
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start < 0 || end <= start) {
+    return undefined;
+  }
+  const candidate = text.slice(start, end + 1);
+  try {
+    const parsed = JSON.parse(candidate) as unknown;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
+function parseCommandLines(answer: string): { answer: string; commands: string[] } {
+  const lines = answer.split(/\r?\n/);
+  const commands: string[] = [];
+  const narrative: string[] = [];
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (line.toUpperCase().startsWith("CMD:")) {
+      const command = line.slice(4).trim();
+      if (command) {
+        commands.push(command);
+      }
+      continue;
+    }
+    narrative.push(raw);
+  }
+  return {
+    answer: narrative.join("\n").trim(),
+    commands
+  };
+}
+
+async function providerChat(messages: ChatMessage[]): Promise<string> {
+  if (aiProvider === "anthropic") {
+    if (!anthropicApiKey) {
+      throw new Error("ANTHROPIC_API_KEY is required for anthropic provider.");
+    }
+    const system = messages.find((m) => m.role === "system")?.content ?? "";
+    const bodyMessages = messages
+      .filter((m) => m.role !== "system")
+      .map((m) => ({ role: m.role, content: m.content }));
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": anthropicApiKey,
+        "anthropic-version": "2023-06-01"
+      },
+      body: JSON.stringify({
+        model: aiModel,
+        max_tokens: 700,
+        system,
+        messages: bodyMessages
+      })
+    });
+    if (!response.ok) {
+      throw new Error(`Anthropic request failed: ${response.status} ${response.statusText}`);
+    }
+    const payload = (await response.json()) as { content?: Array<{ type?: string; text?: string }> };
+    return (payload.content ?? [])
+      .filter((item) => item.type === "text")
+      .map((item) => item.text ?? "")
+      .join("")
+      .trim();
+  }
+
+  if (aiProvider === "ollama") {
+    const response = await fetch(`${aiOllamaBaseUrl}/api/chat`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        model: aiModel,
+        stream: false,
+        messages
+      })
+    });
+    if (!response.ok) {
+      throw new Error(`Ollama request failed: ${response.status} ${response.statusText}`);
+    }
+    const payload = (await response.json()) as { message?: { content?: string } };
+    return (payload.message?.content ?? "").trim();
+  }
+
+  if (!openAiApiKey) {
+    throw new Error("OPENAI_API_KEY/OPENAIKEY is required for openai provider.");
+  }
+  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${openAiApiKey}`
+    },
+    body: JSON.stringify({
+      model: aiModel,
+      temperature: 0.3,
+      messages
+    })
+  });
+  if (!response.ok) {
+    throw new Error(`OpenAI request failed: ${response.status} ${response.statusText}`);
+  }
+  const payload = (await response.json()) as {
+    choices?: Array<{ message?: { content?: string } }>;
+  };
+  return (payload.choices?.[0]?.message?.content ?? "").trim();
+}
+
+async function respondWithAssistant(input: AssistantRespondRequest): Promise<AssistantRespondResult> {
+  const prompt = input.prompt.trim();
+  const context = (input.context ?? "").trim();
+  const systemPrompt = (input.systemPrompt ?? "").trim();
+
+  const plannerSystem =
+    "You are a routing planner. Return strict JSON only: {\"useRag\":boolean,\"ragQuery\":string}. " +
+    "Set useRag true when DragonRealms factual/wiki info would help. No markdown.";
+  const plannerUser = `Player prompt:\n${prompt}\n\nRecent context:\n${context || "(none)"}`;
+
+  let useRag = /\b(elanthipedia|wiki|skill|spell|guild|train|training|where|location|hunt|craft)\b/i.test(prompt);
+  let ragQuery = prompt;
+
+  try {
+    const plannerText = await providerChat([
+      { role: "system", content: plannerSystem },
+      { role: "user", content: plannerUser }
+    ]);
+    const planner = extractJsonObject(plannerText);
+    if (planner) {
+      const plannerUseRag = planner.useRag;
+      const plannerQuery = planner.ragQuery;
+      if (typeof plannerUseRag === "boolean") {
+        useRag = plannerUseRag;
+      }
+      if (typeof plannerQuery === "string" && plannerQuery.trim().length >= 2) {
+        ragQuery = plannerQuery.trim();
+      }
+    }
+  } catch {
+    // keep heuristic defaults when planner call fails
+  }
+
+  let ragBlock = "";
+  let ragUsed = false;
+  if (useRag) {
+    const ragResults = await queryPgvector(ragQuery, 6, { hybrid: true });
+    const confident = ragResults.filter((item) => item.similarity >= ragMinSimilarity).slice(0, 4);
+    if (confident.length > 0) {
+      ragUsed = true;
+      ragBlock = confident
+        .map((item, index) => {
+          const citation = `${item.title}${item.headingPath ? ` :: ${item.headingPath}` : ""}`;
+          const snippet = item.text.replace(/\s+/g, " ").trim();
+          const trimmed = snippet.length > 480 ? `${snippet.slice(0, 480)}...` : snippet;
+          return `${index + 1}. ${citation} (${item.url})\nSimilarity: ${item.similarity.toFixed(4)}\n${trimmed}`;
+        })
+        .join("\n\n");
+    }
+  }
+
+  const finalSystem = [
+    systemPrompt || "You are a DragonRealms gameplay coach.",
+    "If useful, provide one actionable command line prefixed exactly as 'CMD: '.",
+    "Stay concise and practical for live gameplay."
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+
+  const finalUser = [
+    `Player request:\n${prompt}`,
+    `Recent game context:\n${context || "(none)"}`,
+    ragUsed ? `Tool result elanthipedia_rag_query:\n${ragBlock}` : "Tool result elanthipedia_rag_query: (not used)"
+  ].join("\n\n");
+
+  const modelReply = await providerChat([
+    { role: "system", content: finalSystem },
+    { role: "user", content: finalUser }
+  ]);
+
+  const parsed = parseCommandLines(modelReply);
+  return {
+    answer: parsed.answer || "(No narrative response.)",
+    proposedCommands: parsed.commands,
+    provider: aiProvider,
+    model: aiModel,
+    ragUsed
+  };
+}
+
+const bridge = new BrowserBridge({
+  token: bridgeToken,
+  assistantResponder: respondWithAssistant
+});
 
 const server = new McpServer({
   name: SERVER_NAME,

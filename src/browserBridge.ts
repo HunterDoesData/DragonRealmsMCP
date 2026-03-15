@@ -25,6 +25,21 @@ type ProposalEntry = {
   reviewedAt?: string;
 };
 
+export type AssistantRespondRequest = {
+  prompt: string;
+  context?: string;
+  systemPrompt?: string;
+  source?: string;
+};
+
+export type AssistantRespondResult = {
+  answer: string;
+  proposedCommands?: string[];
+  provider?: string;
+  model?: string;
+  ragUsed?: boolean;
+};
+
 function getAuthToken(req: Request): string {
   const authHeader = req.header("authorization") ?? "";
   const headerToken = req.header("x-dr-token") ?? "";
@@ -38,6 +53,7 @@ export class BrowserBridge {
   private readonly app = express();
   private readonly maxOutputEntries: number;
   private readonly token?: string;
+  private readonly assistantResponder?: (request: AssistantRespondRequest) => Promise<AssistantRespondResult>;
   private httpServer?: Server;
 
   private output: OutputEntry[] = [];
@@ -47,9 +63,14 @@ export class BrowserBridge {
   private commandId = 1;
   private proposalId = 1;
 
-  constructor(options?: { maxOutputEntries?: number; token?: string }) {
+  constructor(options?: {
+    maxOutputEntries?: number;
+    token?: string;
+    assistantResponder?: (request: AssistantRespondRequest) => Promise<AssistantRespondResult>;
+  }) {
     this.maxOutputEntries = options?.maxOutputEntries ?? 1000;
     this.token = options?.token;
+    this.assistantResponder = options?.assistantResponder;
     this.configureRoutes();
   }
 
@@ -243,6 +264,41 @@ export class BrowserBridge {
       }
 
       res.json({ ok: true, proposal });
+    });
+
+    this.app.post("/agent/respond", async (req, res) => {
+      if (!this.authorize(req)) {
+        res.status(401).json({ error: "Unauthorized" });
+        return;
+      }
+
+      if (!this.assistantResponder) {
+        res.status(503).json({ error: "Assistant responder is not configured." });
+        return;
+      }
+
+      const prompt = typeof req.body?.prompt === "string" ? req.body.prompt.trim() : "";
+      const context = typeof req.body?.context === "string" ? req.body.context.trim() : "";
+      const systemPrompt = typeof req.body?.systemPrompt === "string" ? req.body.systemPrompt.trim() : "";
+      const source = typeof req.body?.source === "string" ? req.body.source.trim() : "bridge";
+
+      if (!prompt) {
+        res.status(400).json({ error: "Body must contain non-empty 'prompt'." });
+        return;
+      }
+
+      try {
+        const response = await this.assistantResponder({
+          prompt,
+          context: context || undefined,
+          systemPrompt: systemPrompt || undefined,
+          source
+        });
+        res.json({ ok: true, response });
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        res.status(500).json({ error: detail });
+      }
     });
   }
 

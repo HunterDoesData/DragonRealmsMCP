@@ -78,6 +78,8 @@ private:
     QString baseUrl;
     QString token;
     QString llmProvider;
+    QString ollamaModel;
+    QString ollamaBaseUrl;
     QString openAiApiKey;
     QString anthropicApiKey;
     QString mcpEntryPath;

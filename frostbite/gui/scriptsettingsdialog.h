@@ -3,6 +3,7 @@
 
 #include <QDialog>
 #include <QFileDialog>
+#include <QStringList>
 
 class MainWindow;
 class ClientSettings;
@@ -20,6 +21,8 @@ public:
 
 private:    
     void loadSettings();
+    QStringList detectOllamaModels() const;
+    void loadOllamaModels(bool preserveCurrentSelection = true);
 
     void saveChanges();
     void cancelChanges();
@@ -36,6 +39,7 @@ signals:
 
 private slots:
     void browse();
+    void refreshOllamaModels();
     void inputChanged();
     void okPressed();
     void applyPressed();

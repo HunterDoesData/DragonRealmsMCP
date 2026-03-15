@@ -186,7 +186,14 @@ QString AiBridgeService::configuredProvider() const {
 }
 
 QString AiBridgeService::configuredModel() const {
-    return configuredProvider() == "anthropic" ? QString("claude-3-5-haiku-latest") : QString("gpt-4o-mini");
+    const QString provider = configuredProvider();
+    if (provider == "anthropic") {
+        return QString("claude-3-5-haiku-latest");
+    }
+    if (provider == "ollama") {
+        return ollamaModel.isEmpty() ? QString("deepseek-r1:8b") : ollamaModel;
+    }
+    return QString("gpt-4o-mini");
 }
 
 void AiBridgeService::reloadSettings() {
@@ -202,6 +209,8 @@ void AiBridgeService::reloadSettings() {
     baseUrl = settings->getQStringNotBlank("AiBridge/baseUrl", "http://127.0.0.1:8787");
     token = settings->getParameter("AiBridge/token", "").toString().trimmed();
     llmProvider = settings->getParameter("AiBridge/llmProvider", "openai").toString().trimmed().toLower();
+    ollamaModel = settings->getParameter("AiBridge/ollamaModel", "deepseek-r1:8b").toString().trimmed();
+    ollamaBaseUrl = settings->getQStringNotBlank("AiBridge/ollamaBaseUrl", "http://127.0.0.1:11434");
     openAiApiKey = settings->getParameter("AiBridge/openAiApiKey", "").toString().trimmed();
     anthropicApiKey = settings->getParameter("AiBridge/anthropicApiKey", "").toString().trimmed();
     mcpEntryPath = settings->getParameter("AiBridge/mcpEntryPath", "").toString().trimmed();
@@ -315,10 +324,14 @@ void AiBridgeService::startInternalMcp() {
 
     const QString provider = llmProvider.isEmpty() ? QString("openai") : llmProvider;
     env.insert("AI_LLM_PROVIDER", provider);
+    env.insert("AI_LLM_MODEL", this->configuredModel());
+    env.insert("AI_OLLAMA_BASE_URL", ollamaBaseUrl);
+    env.insert("AI_OLLAMA_MODEL", ollamaModel.isEmpty() ? QString("deepseek-r1:8b") : ollamaModel);
     if (provider == "anthropic" && !anthropicApiKey.isEmpty()) {
         env.insert("ANTHROPIC_API_KEY", anthropicApiKey);
-    } else if (!openAiApiKey.isEmpty()) {
+    } else if (provider == "openai" && !openAiApiKey.isEmpty()) {
         env.insert("OPENAI_API_KEY", openAiApiKey);
+        env.insert("OPENAIKEY", openAiApiKey);
     }
 
     mcpProcess->setProcessEnvironment(env);
@@ -477,6 +490,73 @@ void AiBridgeService::requestAssistantResponse(const QString& prompt) {
         "Respond only as a DragonRealms gameplay coach."
     ).arg(userPrompt, contextBlock);
 
+    if (runInternalMcp && !embeddedMode) {
+        QNetworkRequest bridgeRequest = this->buildRequest("/agent/respond");
+        bridgeRequest.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+
+        QJsonObject bridgeBody;
+        bridgeBody.insert("prompt", userPrompt);
+        bridgeBody.insert("context", contextBlock);
+        bridgeBody.insert("systemPrompt", systemPrompt);
+        bridgeBody.insert("source", "frostbite");
+
+        emit statusMessage(QString("Thinking (%1 via MCP)...").arg(provider));
+        QNetworkReply* bridgeReply = network->post(bridgeRequest, QJsonDocument(bridgeBody).toJson(QJsonDocument::Compact));
+        connect(bridgeReply, &QNetworkReply::finished, this, [this, bridgeReply]() {
+            const QByteArray payload = bridgeReply->readAll();
+            const int httpCode = bridgeReply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+
+            if (bridgeReply->error() != QNetworkReply::NoError) {
+                QString detail = QString::fromUtf8(payload).trimmed();
+                if (detail.length() > 300) {
+                    detail = detail.left(300) + "...";
+                }
+                if (detail.isEmpty()) {
+                    emit statusMessage(QString("MCP assistant request failed (%1): %2").arg(httpCode).arg(bridgeReply->errorString()));
+                } else {
+                    emit statusMessage(QString("MCP assistant request failed (%1): %2").arg(httpCode).arg(detail));
+                }
+                observerRequestInFlight = false;
+                bridgeReply->deleteLater();
+                return;
+            }
+
+            QJsonParseError parseError;
+            const QJsonDocument doc = QJsonDocument::fromJson(payload, &parseError);
+            if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
+                emit statusMessage("MCP assistant response parse error.");
+                observerRequestInFlight = false;
+                bridgeReply->deleteLater();
+                return;
+            }
+
+            const QJsonObject root = doc.object();
+            const QJsonObject response = root.value("response").toObject();
+            QString answer = response.value("answer").toString().trimmed();
+
+            const QJsonArray proposedCommands = response.value("proposedCommands").toArray();
+            for (const QJsonValue& item : proposedCommands) {
+                const QString cmd = item.toString().trimmed();
+                if (!cmd.isEmpty()) {
+                    emit commandProposed(cmd);
+                }
+            }
+
+            if (answer.isEmpty()) {
+                answer = "(No narrative response. Proposed commands were queued for approval.)";
+            }
+
+            if (answer.length() > 3000) {
+                answer = answer.left(3000) + "...";
+            }
+
+            emit statusMessage(answer);
+            observerRequestInFlight = false;
+            bridgeReply->deleteLater();
+        });
+        return;
+    }
+
     QNetworkRequest request;
     QJsonObject body;
 
@@ -501,6 +581,25 @@ void AiBridgeService::requestAssistantResponse(const QString& prompt) {
         body.insert("model", model);
         body.insert("max_tokens", 600);
         body.insert("system", systemPrompt);
+        body.insert("messages", messages);
+    } else if (provider == "ollama") {
+        const QString normalizedBase = ollamaBaseUrl.endsWith("/") ? ollamaBaseUrl.left(ollamaBaseUrl.length() - 1) : ollamaBaseUrl;
+        request = QNetworkRequest(QUrl(normalizedBase + "/api/chat"));
+        request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+
+        QJsonArray messages;
+        QJsonObject systemMessage;
+        systemMessage.insert("role", "system");
+        systemMessage.insert("content", systemPrompt);
+        messages.append(systemMessage);
+
+        QJsonObject message;
+        message.insert("role", "user");
+        message.insert("content", userContent);
+        messages.append(message);
+
+        body.insert("model", model);
+        body.insert("stream", false);
         body.insert("messages", messages);
     } else {
         if (openAiApiKey.isEmpty()) {
@@ -571,6 +670,8 @@ void AiBridgeService::requestAssistantResponse(const QString& prompt) {
                     answer += part.value("text").toString();
                 }
             }
+        } else if (provider == "ollama") {
+            answer = root.value("message").toObject().value("content").toString();
         } else {
             const QJsonArray choices = root.value("choices").toArray();
             if (!choices.isEmpty()) {

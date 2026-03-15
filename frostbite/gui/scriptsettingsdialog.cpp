@@ -5,6 +5,9 @@
 #include "clientsettings.h"
 #include "defaultvalues.h"
 
+#include <QProcess>
+#include <QRegularExpression>
+
 ScriptSettingsDialog::ScriptSettingsDialog(QWidget *parent) : QDialog(parent), ui(new Ui::ScriptSettingsDialog) {
     ui->setupUi(this);
 
@@ -24,6 +27,7 @@ ScriptSettingsDialog::ScriptSettingsDialog(QWidget *parent) : QDialog(parent), u
     ui->streamingPortInput->setObjectName("streamingServerPort");
     ui->internalMcpEnabled->setObjectName("AiBridge/runInternalMcp");
     ui->llmProviderInput->setObjectName("AiBridge/llmProvider");
+    ui->ollamaModelInput->setObjectName("AiBridge/ollamaModel");
     ui->openAiApiKeyInput->setObjectName("AiBridge/openAiApiKey");
     ui->anthropicApiKeyInput->setObjectName("AiBridge/anthropicApiKey");
     ui->mcpEntryPathInput->setObjectName("AiBridge/mcpEntryPath");
@@ -108,9 +112,94 @@ ScriptSettingsDialog::ScriptSettingsDialog(QWidget *parent) : QDialog(parent), u
         this->ui->applyButton->setEnabled(true);
     });
 
+    connect(ui->ollamaModelInput, &QComboBox::currentTextChanged, [=](const QString& value) {
+        this->changeList.insert(this->ui->ollamaModelInput->objectName(), QVariant(value.trimmed()));
+        this->ui->applyButton->setEnabled(true);
+    });
+
+    connect(ui->ollamaRefreshButton, &QAbstractButton::clicked, this, &ScriptSettingsDialog::refreshOllamaModels);
+
     connect(ui->okButton, &QAbstractButton::clicked, this, &ScriptSettingsDialog::okPressed);
     connect(ui->applyButton, &QAbstractButton::clicked, this, &ScriptSettingsDialog::applyPressed);
     connect(ui->cancelButton, &QAbstractButton::clicked, this, &ScriptSettingsDialog::cancelPressed);
+}
+
+QStringList ScriptSettingsDialog::detectOllamaModels() const {
+    QProcess process;
+    process.start("ollama", QStringList() << "list");
+
+    if (!process.waitForStarted(800)) {
+        return QStringList();
+    }
+
+    if (!process.waitForFinished(5000)) {
+        process.kill();
+        process.waitForFinished(1000);
+        return QStringList();
+    }
+
+    if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0) {
+        return QStringList();
+    }
+
+    const QString output = QString::fromUtf8(process.readAllStandardOutput());
+    QStringList models;
+    const QStringList lines = output.split('\n', Qt::SkipEmptyParts);
+    bool sawHeader = false;
+    for (const QString& rawLine : lines) {
+        const QString line = rawLine.trimmed();
+        if (line.isEmpty()) {
+            continue;
+        }
+
+        if (!sawHeader) {
+            sawHeader = true;
+            if (line.startsWith("NAME", Qt::CaseInsensitive)) {
+                continue;
+            }
+        }
+
+        const QStringList parts = line.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
+        if (parts.isEmpty()) {
+            continue;
+        }
+
+        const QString model = parts.first().trimmed();
+        if (!model.isEmpty() && !models.contains(model)) {
+            models.append(model);
+        }
+    }
+
+    models.sort(Qt::CaseInsensitive);
+    return models;
+}
+
+void ScriptSettingsDialog::loadOllamaModels(bool preserveCurrentSelection) {
+    const QString previousValue = preserveCurrentSelection
+                                      ? ui->ollamaModelInput->currentText().trimmed()
+                                      : settings->getParameter("AiBridge/ollamaModel", "deepseek-r1:8b").toString().trimmed();
+
+    const QStringList detectedModels = detectOllamaModels();
+    ui->ollamaModelInput->blockSignals(true);
+    ui->ollamaModelInput->clear();
+
+    if (!detectedModels.isEmpty()) {
+        ui->ollamaModelInput->addItems(detectedModels);
+        ui->ollamaModelInput->setToolTip("Detected from local 'ollama list'.");
+    } else {
+        ui->ollamaModelInput->setToolTip("No local models detected. Install with 'ollama pull <model>'.");
+    }
+
+    if (!previousValue.isEmpty()) {
+        if (ui->ollamaModelInput->findText(previousValue, Qt::MatchFixedString) < 0) {
+            ui->ollamaModelInput->addItem(previousValue);
+        }
+        ui->ollamaModelInput->setCurrentText(previousValue);
+    } else if (ui->ollamaModelInput->count() > 0) {
+        ui->ollamaModelInput->setCurrentIndex(0);
+    }
+
+    ui->ollamaModelInput->blockSignals(false);
 }
 
 void ScriptSettingsDialog::loadSettings() {
@@ -138,6 +227,7 @@ void ScriptSettingsDialog::loadSettings() {
         }
         ui->llmProviderInput->setCurrentIndex(idx);
     }
+    this->loadOllamaModels(false);
     ui->openAiApiKeyInput->setText(settings->getParameter("AiBridge/openAiApiKey", "").toString());
     ui->anthropicApiKeyInput->setText(settings->getParameter("AiBridge/anthropicApiKey", "").toString());
     ui->mcpEntryPathInput->setText(settings->getParameter("AiBridge/mcpEntryPath", "").toString());
@@ -148,6 +238,10 @@ void ScriptSettingsDialog::loadSettings() {
     ui->aiConsumeCommandsEnabled->setCheckState(settings->getParameter("AiBridge/consumeCommands", false).toBool() ? Qt::Checked : Qt::Unchecked);
     ui->aiBridgeBaseUrlInput->setText(settings->getParameter("AiBridge/baseUrl", "http://127.0.0.1:3989").toString());
     ui->aiBridgeTokenInput->setText(settings->getParameter("AiBridge/token", "").toString());
+}
+
+void ScriptSettingsDialog::refreshOllamaModels() {
+    this->loadOllamaModels(true);
 }
 
 void ScriptSettingsDialog::browse() {
